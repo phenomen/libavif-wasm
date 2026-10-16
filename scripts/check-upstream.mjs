@@ -104,20 +104,3 @@ for (const check of checks) {
 if (updates.length && process.exitCode !== 2) {
   process.exitCode = 1;
 }
-
-if (process.env.GITHUB_OUTPUT) {
-  const { appendFile } = await import("node:fs/promises");
-  const body = updates.length
-    ? [
-        "New upstream releases are available:",
-        "",
-        ...updates.map((u) => `- **${u.name}**: \`${u.current}\` → \`${u.latest}\``),
-        "",
-        "Pins live in `versions.env`. After bumping, run the Docker build and refresh README sizes.",
-      ].join("\n")
-    : "";
-  await appendFile(
-    process.env.GITHUB_OUTPUT,
-    `has_updates=${updates.length ? "true" : "false"}\nupdates_markdown<<EOF\n${body}\nEOF\n`,
-  );
-}
