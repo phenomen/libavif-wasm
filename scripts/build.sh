@@ -255,8 +255,11 @@ LINK_FLAGS=(
 )
 
 echo "==> linking decode module"
-em++ "${ROOT}/src/c/decode.c" \
+emcc -c "${ROOT}/src/c/decode.c" \
   -I"${BUILD}/prefix-decode/include" \
+  "${COMMON_FLAGS[@]}" \
+  -o "${BUILD}/decode.o"
+em++ "${BUILD}/decode.o" \
   "${BUILD}/prefix-decode/lib/libavif.a" \
   "${PREFIX}/lib/libdav1d.a" \
   "${PREFIX}/lib/libyuv.a" \
@@ -268,8 +271,11 @@ em++ "${ROOT}/src/c/decode.c" \
   -o "${DIST}/codec/decode.mjs"
 
 echo "==> linking encode module"
-em++ "${ROOT}/src/c/encode.c" \
+emcc -c "${ROOT}/src/c/encode.c" \
   -I"${BUILD}/prefix-encode/include" \
+  "${COMMON_FLAGS[@]}" \
+  -o "${BUILD}/encode.o"
+em++ "${BUILD}/encode.o" \
   "${BUILD}/prefix-encode/lib/libavif.a" \
   "${PREFIX}/lib/libaom.a" \
   "${PREFIX}/lib/libyuv.a" \

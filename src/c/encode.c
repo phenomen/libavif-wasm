@@ -12,6 +12,10 @@
 #define EMSCRIPTEN_KEEPALIVE
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 static char g_error[256];
 
 static void set_error(const char *msg) {
@@ -146,3 +150,7 @@ uint8_t *avif_wasm_encode(const uint8_t *rgba, int width, int height, int qualit
     avifRWDataFree(&output);
     return out;
 }
+
+#ifdef __cplusplus
+}
+#endif
