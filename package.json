@@ -1,0 +1,63 @@
+{
+  "name": "@phenomen/libavif-wasm",
+  "version": "1.4.2",
+  "description": "WebAssembly port of libavif with separate decode (dav1d) and encode (libaom) ES modules for browsers, Node 20+, and Edge/Workers.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./decode": {
+      "types": "./dist/decode.d.ts",
+      "import": "./dist/decode.js"
+    },
+    "./encode": {
+      "types": "./dist/encode.d.ts",
+      "import": "./dist/encode.js"
+    },
+    "./decode.wasm": "./dist/decode.wasm",
+    "./encode.wasm": "./dist/encode.wasm",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "licenses",
+    "README.md",
+    "versions.env"
+  ],
+  "scripts": {
+    "build": "./scripts/build.sh",
+    "test": "node --test test/node/*.test.mjs",
+    "sizes": "./scripts/measure-sizes.sh",
+    "check-upstream": "node scripts/check-upstream.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phenomen/libavif-wasm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/phenomen/libavif-wasm/issues"
+  },
+  "homepage": "https://github.com/phenomen/libavif-wasm#readme",
+  "keywords": [
+    "avif",
+    "libavif",
+    "wasm",
+    "webassembly",
+    "dav1d",
+    "libaom",
+    "image",
+    "decode",
+    "encode"
+  ]
+}

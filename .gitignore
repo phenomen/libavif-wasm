@@ -1,0 +1,8 @@
+/build/
+/dist/
+/vendor/
+/node_modules/
+*.log
+.DS_Store
+.env
+.emscripten_cache/
