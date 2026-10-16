@@ -135,12 +135,11 @@ if [[ ! -f "${PREFIX}/lib/libyuv.a" ]]; then
     -DJPEG_FOUND=OFF \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
   cmake --build "${BUILD}/libyuv" --target yuv --parallel "${JOBS}"
-  cmake --install "${BUILD}/libyuv" || {
-    mkdir -p "${PREFIX}/include/libyuv"
-    cp -a "${VENDOR}/libyuv/include/." "${PREFIX}/include/"
-    cp -a "${BUILD}/libyuv/libyuv.a" "${PREFIX}/lib/" 2>/dev/null || \
-      cp -a "${BUILD}/libyuv/"*/libyuv.a "${PREFIX}/lib/"
-  }
+  cmake --install "${BUILD}/libyuv" || true
+  mkdir -p "${PREFIX}/include/libyuv"
+  cp -a "${VENDOR}/libyuv/include/." "${PREFIX}/include/"
+  cp -a "${BUILD}/libyuv/libyuv.a" "${PREFIX}/lib/" 2>/dev/null || \
+    cp -a "${BUILD}/libyuv/"*/libyuv.a "${PREFIX}/lib/"
   write_pc libyuv "${LIBYUV_VERSION}" "-lyuv"
 fi
 
@@ -167,7 +166,15 @@ if [[ ! -f "${PREFIX}/lib/libsharpyuv.a" ]]; then
     -DWEBP_USE_THREAD=OFF \
     -DWEBP_ENABLE_SIMD=OFF
   cmake --build "${BUILD}/libwebp" --target sharpyuv --parallel "${JOBS}"
-  cmake --install "${BUILD}/libwebp"
+  cmake --install "${BUILD}/libwebp" || true
+  cp -a "${BUILD}/libwebp/libsharpyuv.a" "${PREFIX}/lib/" 2>/dev/null || true
+  mkdir -p "${PREFIX}/include/sharpyuv"
+  cp -a "${VENDOR}/libwebp/sharpyuv/sharpyuv.h" "${VENDOR}/libwebp/sharpyuv/sharpyuv_csp.h" \
+    "${PREFIX}/include/sharpyuv/" 2>/dev/null || true
+  if [[ -d "${PREFIX}/include/webp/sharpyuv" && ! -e "${PREFIX}/include/sharpyuv/sharpyuv.h" ]]; then
+    ln -sfn ../webp/sharpyuv/sharpyuv.h "${PREFIX}/include/sharpyuv/sharpyuv.h"
+    ln -sfn ../webp/sharpyuv/sharpyuv_csp.h "${PREFIX}/include/sharpyuv/sharpyuv_csp.h"
+  fi
   if [[ ! -f "${PREFIX}/lib/pkgconfig/libsharpyuv.pc" ]]; then
     write_pc libsharpyuv "${LIBWEBP_VERSION#v}" "-lsharpyuv"
   fi
