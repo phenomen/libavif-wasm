@@ -19,13 +19,37 @@ function parseEnv(text) {
   return out;
 }
 
-async function githubLatestTag(repo) {
+function parseSemver(tag) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(tag);
+  if (!m) return null;
+  return { tag, n: [Number(m[1]), Number(m[2]), Number(m[3])] };
+}
+
+function cmpSemver(a, b) {
+  for (let i = 0; i < 3; i++) {
+    if (a.n[i] !== b.n[i]) return a.n[i] - b.n[i];
+  }
+  return 0;
+}
+
+async function githubLatestRelease(repo) {
   const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
     headers: { Accept: "application/vnd.github+json", "User-Agent": "libavif-wasm-upstream-check" },
   });
   if (!res.ok) throw new Error(`GitHub ${repo}: HTTP ${res.status}`);
   const json = await res.json();
   return json.tag_name;
+}
+
+async function githubLatestStableTag(repo) {
+  const res = await fetch(`https://api.github.com/repos/${repo}/tags?per_page=30`, {
+    headers: { Accept: "application/vnd.github+json", "User-Agent": "libavif-wasm-upstream-check" },
+  });
+  if (!res.ok) throw new Error(`GitHub ${repo} tags: HTTP ${res.status}`);
+  const json = await res.json();
+  const parsed = json.map((t) => parseSemver(t.name)).filter(Boolean);
+  parsed.sort(cmpSemver);
+  return parsed.at(-1)?.tag;
 }
 
 async function gitlabLatestTag(project) {
@@ -44,19 +68,20 @@ const checks = [
   {
     name: "libavif",
     current: env.LIBAVIF_VERSION,
-    latest: () => githubLatestTag("AOMediaCodec/libavif"),
+    latest: () => githubLatestRelease("AOMediaCodec/libavif"),
   },
   {
     name: "dav1d",
     current: env.DAV1D_VERSION,
-    latest: () => githubLatestTag("videolan/dav1d"),
+    // videolan/dav1d's GitHub "latest release" is a stale 0.1.0; use tags.
+    latest: () => githubLatestStableTag("videolan/dav1d"),
   },
   {
     name: "libaom",
     current: env.AOM_VERSION,
     latest: async () =>
       (await gitlabLatestTag("webmproject/libaom")) ??
-      (await githubLatestTag("webmproject/libaom")),
+      (await githubLatestStableTag("webmproject/libaom")),
   },
 ];
 

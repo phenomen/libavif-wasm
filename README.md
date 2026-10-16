@@ -21,14 +21,14 @@ A Monday cron workflow compares libavif, dav1d, and libaom to their latest relea
 
 ## Wasm sizes
 
-Measured from this build (`gzip -9`). Re-run `./scripts/measure-sizes.sh` after rebuilding.
+Measured from the Emscripten 6.0.12 / libavif v1.4.2 build (`gzip -9`). Re-run `./scripts/measure-sizes.sh` after rebuilding; values are also written to `dist/sizes.json`.
 
-| Module | Raw | gzip |
-| --- | --- | --- |
-| `decode.wasm` (dav1d) | *built in CI / local Docker* | *see `dist/sizes.json`* |
-| `encode.wasm` (libaom) | *built in CI / local Docker* | *see `dist/sizes.json`* |
+| Module | Codecs | Raw | gzip-9 |
+| --- | --- | --- | --- |
+| `decode.wasm` | dav1d + libyuv | 770.3 KiB (788,769 B) | **294.1 KiB** (301,185 B) |
+| `encode.wasm` | libaom + libyuv + libsharpyuv | 5.70 MiB (5,981,594 B) | **1.25 MiB** (1,306,020 B) |
 
-Sizes are filled in after a successful `./scripts/build.sh` (also written to `dist/sizes.json`).
+Encode is dominated by generic-CPU libaom. Decode stays small because it does not link libaom.
 
 ## Install
 
