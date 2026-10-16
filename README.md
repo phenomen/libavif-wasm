@@ -1,34 +1,6 @@
 # @phenomen/libavif-wasm
 
-Maintained WebAssembly port of [libavif](https://github.com/AOMediaCodec/libavif) with **separate decode and encode** ES modules. Single-threaded (`-msimd128`) so the same artifacts run in browsers, Node 20+, Vercel Node functions, and Vercel Edge / Cloudflare Workers.
-
-The unscoped name `libavif-wasm` is already taken on npm (an unmaintained 0.1.x package). This port is **`@phenomen/libavif-wasm`** and is published publicly (`publishConfig.access: public`).
-
-## Upstream pins
-
-All versions live in [`versions.env`](./versions.env) so bumping is one file:
-
-| Component | Pin | Role |
-| --- | --- | --- |
-| Emscripten (emsdk) | 6.0.12 | Toolchain |
-| libavif | v1.4.2 | AVIF container |
-| dav1d | 1.5.4 | Decode |
-| libaom | v3.15.2 | Encode (`AOM_TARGET_CPU=generic`) |
-| libyuv | `644251f25` | YUV ↔ RGB |
-| libsharpyuv (libwebp) | v1.6.0 | RGB → YUV (encode) |
-
-A Monday cron workflow compares libavif, dav1d, and libaom to their latest releases and opens an issue when a pin is stale.
-
-## Wasm sizes
-
-Measured from the Emscripten 6.0.12 / libavif v1.4.2 build (`gzip -9`). Re-run `./scripts/measure-sizes.sh` after rebuilding; values are also written to `dist/sizes.json`.
-
-| Module | Codecs | Raw | gzip-9 |
-| --- | --- | --- | --- |
-| `decode.wasm` | dav1d + libyuv | 770.3 KiB (788,769 B) | **294.1 KiB** (301,185 B) |
-| `encode.wasm` | libaom + libyuv + libsharpyuv | 5.70 MiB (5,981,594 B) | **1.25 MiB** (1,306,020 B) |
-
-Encode is dominated by generic-CPU libaom. Decode stays small because it does not link libaom.
+WebAssembly port of [libavif](https://github.com/AOMediaCodec/libavif) with separate decode and encode ES modules for browsers, Node 20+, and Edge/Workers.
 
 ## Install
 
@@ -36,29 +8,65 @@ Encode is dominated by generic-CPU libaom. Decode stays small because it does no
 npm install @phenomen/libavif-wasm
 ```
 
-The published tarball includes `dist/*.wasm`, the ES module wrappers, TypeScript types, `LICENSE`, and `THIRD_PARTY_NOTICES.md` / `licenses/`.
+Call `init()` once per isolate with a `WebAssembly.Module` before `decode` or `encode`.
 
-## Publishing
+## Browser
 
-`dist/` is gitignored (the wasm binaries are build outputs). A clean checkout is not publishable until `./scripts/build.sh` has run. `npm pack` / `npm publish` run `prepack`, which refuses to proceed if the wasm modules or license files are missing.
+```ts
+import { init, decode } from "@phenomen/libavif-wasm/decode";
+import decodeWasm from "@phenomen/libavif-wasm/decode.wasm";
 
-To release:
-
-1. Set `version` in `package.json` (keep it aligned with the libavif pin when possible).
-2. Tag `v<version>` and push the tag.
-3. The [Release](.github/workflows/release.yml) workflow builds in Docker, tests, verifies `npm pack` contents, creates the GitHub Release, and runs `npm publish --access public --provenance`.
-
-Configure [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers) for `@phenomen/libavif-wasm` on this GitHub repository, **or** set the `NPM_TOKEN` Actions secret (an npm Automation token). Scoped packages need `publishConfig.access: public`, which is already set.
-
-Local dry-run after a build:
-
-```bash
-npm run pack:check
+await init(decodeWasm);
+const { data, width, height } = await decode(await fetch("/photo.avif").then((r) => r.arrayBuffer()));
+ctx.putImageData(new ImageData(data, width, height), 0, 0);
 ```
 
-## API
+```ts
+import { init, encode } from "@phenomen/libavif-wasm/encode";
+import encodeWasm from "@phenomen/libavif-wasm/encode.wasm";
 
-Both modules must be **initialized from an imported `WebAssembly.Module`**. The glue never fetches, never compiles from raw bytes, and is built with `-sFILESYSTEM=0`, so Edge and Workers do not need a filesystem or a `locateFile` hook.
+await init(encodeWasm);
+const avif = await encode(imageData, { quality: 70, speed: 6, subsample: 420 });
+```
+
+If your bundler gives you bytes or a URL instead of a `WebAssembly.Module`, compile once with `new WebAssembly.Module(bytes)` and pass that to `init`.
+
+## Node / Vercel Function
+
+```ts
+import { readFile } from "node:fs/promises";
+import { init, decode, wasmUrl } from "@phenomen/libavif-wasm/decode";
+
+await init(new WebAssembly.Module(await readFile(wasmUrl)));
+const image = await decode((await readFile("./photo.avif")).buffer);
+```
+
+```ts
+import { readFile } from "node:fs/promises";
+import { init, encode, wasmUrl } from "@phenomen/libavif-wasm/encode";
+
+await init(new WebAssembly.Module(await readFile(wasmUrl)));
+const avif = await encode(image, { quality: 60, speed: 8 });
+```
+
+## Edge / Workers
+
+```ts
+import { init, decode } from "@phenomen/libavif-wasm/decode";
+import decodeWasm from "@phenomen/libavif-wasm/decode.wasm";
+
+export const runtime = "edge";
+
+export async function POST(req: Request) {
+  await init(decodeWasm);
+  const { width, height } = await decode(await req.arrayBuffer());
+  return Response.json({ width, height });
+}
+```
+
+Cloudflare Workers and Vercel Edge treat `import … from "*.wasm"` as a `WebAssembly.Module`. Configure the bundler to emit wasm as a module import.
+
+## API
 
 ```ts
 init(wasmModule: WebAssembly.Module): Promise<void>
@@ -73,153 +81,52 @@ encode(
   image: { data: ArrayLike<number>; width: number; height: number },
   options?: {
     quality?: number     // 0–100, default 60
-    speed?: number       // 0 (slow/best) – 10 (fast), default 6
+    speed?: number       // 0 (slowest / best) – 10 (fastest), default 6
     subsample?: 420 | 422 | 444 | 400
     bitDepth?: 8 | 10 | 12
-  }
+  },
 ): Promise<ArrayBuffer>
 ```
 
-## Browser
+Import decode from `@phenomen/libavif-wasm/decode` and encode from `@phenomen/libavif-wasm/encode`. Each has its own wasm file and `init`.
 
-Bundlers (Vite, webpack, esbuild) can import a `.wasm` file as a `WebAssembly.Module`:
+## Sizes
 
-```ts
-import { init, decode } from "@phenomen/libavif-wasm/decode";
-import decodeWasm from "@phenomen/libavif-wasm/decode.wasm";
+| Module | Raw | gzip-9 |
+| --- | --- | --- |
+| `decode.wasm` | 770.3 KiB (788,769 B) | 294.1 KiB (301,185 B) |
+| `encode.wasm` | 5.70 MiB (5,981,594 B) | 1.25 MiB (1,306,020 B) |
 
-await init(decodeWasm);
+## Versions
 
-const avif = await fetch("/photo.avif").then((r) => r.arrayBuffer());
-const { data, width, height } = await decode(avif);
+| Component | Version |
+| --- | --- |
+| libavif | v1.4.2 |
+| dav1d | 1.5.4 |
+| libaom | v3.15.2 |
+| libyuv | `644251f25` |
+| libsharpyuv (libwebp) | v1.6.0 |
+| Emscripten | 6.0.12 |
 
-const canvas = document.createElement("canvas");
-canvas.width = width;
-canvas.height = height;
-canvas.getContext("2d").putImageData(new ImageData(data, width, height), 0, 0);
-```
-
-Encode:
-
-```ts
-import { init, encode } from "@phenomen/libavif-wasm/encode";
-import encodeWasm from "@phenomen/libavif-wasm/encode.wasm";
-
-await init(encodeWasm);
-const avif = await encode(imageData, { quality: 70, speed: 6, subsample: 420 });
-```
-
-If your bundler gives you an `URL` or `ArrayBuffer` instead of a `Module`, compile once at the edge of your app (`new WebAssembly.Module(bytes)`) and pass that `Module` to `init`. The library itself will not compile from bytes.
-
-## Node 20+ / Vercel Function
-
-Node cannot `import` a `.wasm` as a `WebAssembly.Module` without experimental flags. Read the file the package exports and construct a `Module` yourself:
-
-```ts
-import { readFile } from "node:fs/promises";
-import { init, decode, wasmUrl } from "@phenomen/libavif-wasm/decode";
-
-export async function GET() {
-  await init(new WebAssembly.Module(await readFile(wasmUrl)));
-  const avif = await readFile("./photo.avif");
-  const image = await decode(avif.buffer);
-  return Response.json({ width: image.width, height: image.height });
-}
-```
-
-Vercel Node function (same pattern):
-
-```ts
-import { readFile } from "node:fs/promises";
-import { init, encode, wasmUrl } from "@phenomen/libavif-wasm/encode";
-
-export async function POST(req: Request) {
-  await init(new WebAssembly.Module(await readFile(wasmUrl)));
-  const { data, width, height } = await req.json();
-  const avif = await encode(
-    { data: Buffer.from(data, "base64"), width, height },
-    { quality: 60, speed: 8 },
-  );
-  return new Response(avif, { headers: { "content-type": "image/avif" } });
-}
-```
-
-## Vercel Edge / Cloudflare Workers
-
-Workers treat `import x from "./file.wasm"` as a `WebAssembly.Module`. No `fetch` of the wasm, no `WebAssembly.compile`:
-
-```ts
-import { init, decode } from "@phenomen/libavif-wasm/decode";
-import decodeWasm from "@phenomen/libavif-wasm/decode.wasm";
-
-export default {
-  async fetch(request: Request) {
-    await init(decodeWasm);
-    const avif = await request.arrayBuffer();
-    const { data, width, height } = await decode(avif);
-    return Response.json({ width, height, bytes: data.byteLength });
-  },
-};
-```
-
-Vercel Edge (App Router):
-
-```ts
-import { init, decode } from "@phenomen/libavif-wasm/decode";
-import decodeWasm from "@phenomen/libavif-wasm/decode.wasm";
-
-export const runtime = "edge";
-
-export async function POST(req: Request) {
-  await init(decodeWasm);
-  const image = await decode(await req.arrayBuffer());
-  return Response.json({ width: image.width, height: image.height });
-}
-```
-
-wrangler.toml / bundler config must emit the `.wasm` as a module import (Cloudflare's default). For Vercel Edge, mark the wasm file as an asset or use a bundler plugin that turns `*.wasm` imports into `WebAssembly.Module`.
-
-## Build
-
-```bash
-# Docker (recommended, pins emscripten/emsdk:6.0.12)
-docker build --build-arg EMSDK_VERSION=6.0.12 -t libavif-wasm-builder .
-docker run --rm -v "$PWD":/src -u "$(id -u):$(id -g)" libavif-wasm-builder ./scripts/build.sh
-
-# or with emsdk + meson + ninja + cmake + pkg-config on PATH
-./scripts/build.sh
-
-node --test test/node/*.test.mjs
-```
-
-`scripts/build.sh` fetches the pinned tarball/tags into `vendor/`, builds dav1d with Meson and `src/meson/emscripten-cross.ini` (`-Denable_asm=false`), builds libaom with `AOM_TARGET_CPU=generic`, then links two modules:
-
-- `dist/decode.wasm` — libavif + dav1d + libyuv
-- `dist/encode.wasm` — libavif + libaom (encode only) + libyuv + libsharpyuv
-
-Both are single-threaded. A pthread / `SharedArrayBuffer` encode variant is omitted on purpose: it needs a second full libaom rebuild, COOP/COEP headers, and does not run on Edge.
-
-## Tests
-
-Node tests (no extra test runner):
-
-1. Decode `test/fixtures/sample.avif` (libavif’s `kodim03_yuv420_8bpc.avif`).
-2. Encode a synthetic RGBA image and decode it back.
-3. Re-encode the decoded fixture and confirm dimensions survive the round-trip.
-
-## Licensing
-
-Repository code (glue, TypeScript API, scripts) is **MIT**, which is compatible with libavif’s **BSD-2-Clause**.
-
-Wasm binaries additionally contain dav1d, libaom, libyuv, and libsharpyuv. Full license texts — including libaom’s BSD-2-Clause **and** the Alliance for Open Media Patent License 1.0 — are in [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) and [`licenses/`](./licenses/). Those files ship in the npm package (`files` in `package.json`) and in GitHub Release zips.
-
-The decode-only module does not link libaom. The encode module does, so AOMedia patent terms apply when you ship `encode.wasm`.
+Pins live in [`versions.env`](./versions.env).
 
 ## Limitations
 
-- Still images only (no animated AVIF / sequences).
-- Decode output is 8-bit RGBA. 10- and 12-bit sources are converted down.
+- Still images only (no animated AVIF).
+- Decode output is 8-bit RGBA.
 - Encode input is 8-bit RGBA; `bitDepth` 10/12 only affects the YUV payload.
-- Single-threaded; Edge and Workers have no `pthread`.
-- No ICC / EXIF / XMP round-trip through the small JS API.
-- `init()` is required in every isolate. Cache the `Module` (Workers do this for you) and call `init` once per isolate.
+- Single-threaded. Call `init()` once per isolate.
+
+## Build from source
+
+```bash
+docker build --build-arg EMSDK_VERSION=6.0.12 -t libavif-wasm-builder .
+docker run --rm -v "$PWD":/src -u "$(id -u):$(id -g)" libavif-wasm-builder ./scripts/build.sh
+node --test test/node/*.test.mjs
+```
+
+Or run `./scripts/build.sh` with emsdk, Meson, Ninja, CMake, and pkg-config on `PATH`.
+
+## License
+
+This repository is [MIT](./LICENSE). The wasm binaries bundle libavif, dav1d, libaom, libyuv, and libsharpyuv. Full texts — including the Alliance for Open Media Patent License 1.0, which applies to encode — are in [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md).
