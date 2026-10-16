@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned Emscripten version
+        id: versions
+        run: |
+          set -a
+          # shellcheck disable=SC1091
+          source versions.env
+          set +a
+          echo "emsdk=${EMSDK_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build wasm image
+        run: |
+          docker build \
+            --build-arg EMSDK_VERSION=${{ steps.versions.outputs.emsdk }} \
+            -t libavif-wasm-builder .
+
+      - name: Compile decode and encode modules
+        run: |
+          docker run --rm \
+            -v "$PWD":/src \
+            -u "$(id -u):$(id -g)" \
+            -e JOBS=4 \
+            libavif-wasm-builder \
+            ./scripts/build.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Test in Node
+        run: node --test test/node/*.test.mjs
+
+      - name: Verify npm pack contents
+        run: node scripts/verify-pack.mjs
+
+      - name: Create npm tarball
+        run: npm pack
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: libavif-wasm
+          if-no-files-found: error
+          path: |
+            dist/**
+            LICENSE
+            THIRD_PARTY_NOTICES.md
+            licenses/**
+            versions.env
+            README.md
+            phenomen-libavif-wasm-*.tgz

@@ -1,0 +1,9 @@
+/build/
+/dist/
+/vendor/
+/node_modules/
+*.tgz
+*.log
+.DS_Store
+.env
+.emscripten_cache/
