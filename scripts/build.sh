@@ -110,7 +110,16 @@ if [[ ! -f "${PREFIX}/lib/libaom.a" ]]; then
     -DCONFIG_AV1_HIGHBITDEPTH=1 \
     -DBUILD_SHARED_LIBS=0
   cmake --build "${BUILD}/aom" --target aom --parallel "${JOBS}"
-  cmake --install "${BUILD}/aom"
+  # emscripten + encode-only sometimes skips aom.pc / aomenc; install the
+  # static library and headers ourselves so cmake --install cannot abort.
+  mkdir -p "${PREFIX}/lib/pkgconfig" "${PREFIX}/include/aom"
+  cp -a "${BUILD}/aom/libaom.a" "${PREFIX}/lib/"
+  cp -a "${VENDOR}/aom/aom/." "${PREFIX}/include/aom/"
+  if [[ -f "${BUILD}/aom/aom.pc" ]]; then
+    cp -a "${BUILD}/aom/aom.pc" "${PREFIX}/lib/pkgconfig/"
+  else
+    write_pc aom "${AOM_VERSION#v}" "-laom -lm"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
