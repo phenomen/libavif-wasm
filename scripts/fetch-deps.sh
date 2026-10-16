@@ -24,12 +24,15 @@ clone_tag() {
 clone_commit() {
   local url="$1" dest="$2" commit="$3"
   if [[ -d "${dest}/.git" ]]; then
-    git -C "${dest}" fetch --depth 1 origin "${commit}" || git -C "${dest}" fetch origin "${commit}"
+    if git -C "${dest}" checkout --force "${commit}" 2>/dev/null; then
+      return 0
+    fi
+    git -C "${dest}" fetch origin "${commit}" || git -C "${dest}" fetch --unshallow || true
     git -C "${dest}" checkout --force "${commit}"
     return
   fi
   rm -rf "${dest}"
-  git clone --filter=blob:none "${url}" "${dest}"
+  git clone "${url}" "${dest}"
   git -C "${dest}" checkout --force "${commit}"
 }
 
