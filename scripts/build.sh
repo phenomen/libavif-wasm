@@ -67,8 +67,11 @@ EOF
 if [[ ! -f "${PREFIX}/lib/libdav1d.a" ]]; then
   echo "==> building dav1d ${DAV1D_VERSION}"
   rm -rf "${BUILD}/dav1d"
+  CROSS_FILE="${BUILD}/emscripten-cross.ini"
+  sed "s#exe_wrapper = 'node'#exe_wrapper = ['${ROOT}/scripts/emscripten-exe-wrapper.sh']#" \
+    "${ROOT}/src/meson/emscripten-cross.ini" > "${CROSS_FILE}"
   meson setup "${BUILD}/dav1d" "${VENDOR}/dav1d" \
-    --cross-file "${ROOT}/src/meson/emscripten-cross.ini" \
+    --cross-file "${CROSS_FILE}" \
     --prefix "${PREFIX}" \
     --libdir lib \
     --default-library static \
