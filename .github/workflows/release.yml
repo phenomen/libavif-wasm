@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   release:
@@ -42,12 +43,31 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          registry-url: https://registry.npmjs.org
 
       - name: Test in Node
         run: node --test test/node/*.test.mjs
 
-      - name: Pack release zip
+      - name: Verify npm pack contents
+        run: node scripts/verify-pack.mjs
+
+      - name: Check tag matches package.json
         run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "git tag v${tag} does not match package.json version ${pkg}" >&2
+            exit 1
+          fi
+
+      - name: Publish to npm
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Pack npm tarball and release zip
+        run: |
+          npm pack
           mkdir -p release
           cp -a dist LICENSE THIRD_PARTY_NOTICES.md licenses versions.env README.md release/
           (cd release && zip -r ../libavif-wasm-${{ github.ref_name }}.zip .)
@@ -57,6 +77,7 @@ jobs:
         with:
           files: |
             libavif-wasm-${{ github.ref_name }}.zip
+            phenomen-libavif-wasm-*.tgz
             dist/decode.wasm
             dist/encode.wasm
             THIRD_PARTY_NOTICES.md

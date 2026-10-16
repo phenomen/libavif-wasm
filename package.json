@@ -32,11 +32,17 @@
     "README.md",
     "versions.env"
   ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
     "build": "./scripts/build.sh",
     "test": "node --test test/node/*.test.mjs",
     "sizes": "./scripts/measure-sizes.sh",
-    "check-upstream": "node scripts/check-upstream.mjs"
+    "check-upstream": "node scripts/check-upstream.mjs",
+    "prepack": "node scripts/prepack.mjs",
+    "pack:check": "node scripts/verify-pack.mjs"
   },
   "engines": {
     "node": ">=20"

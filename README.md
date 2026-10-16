@@ -2,7 +2,7 @@
 
 Maintained WebAssembly port of [libavif](https://github.com/AOMediaCodec/libavif) with **separate decode and encode** ES modules. Single-threaded (`-msimd128`) so the same artifacts run in browsers, Node 20+, Vercel Node functions, and Vercel Edge / Cloudflare Workers.
 
-The unscoped name `libavif-wasm` is already taken on npm (an unmaintained 0.1.x package). This port is published as **`@phenomen/libavif-wasm`**. This repository does not publish to npm from CI; consume it from a GitHub Release or `npm pack`.
+The unscoped name `libavif-wasm` is already taken on npm (an unmaintained 0.1.x package). This port is **`@phenomen/libavif-wasm`** and is published publicly (`publishConfig.access: public`).
 
 ## Upstream pins
 
@@ -33,12 +33,28 @@ Encode is dominated by generic-CPU libaom. Decode stays small because it does no
 ## Install
 
 ```bash
-# from a GitHub Release artifact, or:
-npm pack
-npm install ./phenomen-libavif-wasm-1.4.2.tgz
+npm install @phenomen/libavif-wasm
 ```
 
-Do not `npm publish` from this repo unless you intend to.
+The published tarball includes `dist/*.wasm`, the ES module wrappers, TypeScript types, `LICENSE`, and `THIRD_PARTY_NOTICES.md` / `licenses/`.
+
+## Publishing
+
+`dist/` is gitignored (the wasm binaries are build outputs). A clean checkout is not publishable until `./scripts/build.sh` has run. `npm pack` / `npm publish` run `prepack`, which refuses to proceed if the wasm modules or license files are missing.
+
+To release:
+
+1. Set `version` in `package.json` (keep it aligned with the libavif pin when possible).
+2. Tag `v<version>` and push the tag.
+3. The [Release](.github/workflows/release.yml) workflow builds in Docker, tests, verifies `npm pack` contents, creates the GitHub Release, and runs `npm publish --access public --provenance`.
+
+Configure [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers) for `@phenomen/libavif-wasm` on this GitHub repository, **or** set the `NPM_TOKEN` Actions secret (an npm Automation token). Scoped packages need `publishConfig.access: public`, which is already set.
+
+Local dry-run after a build:
+
+```bash
+npm run pack:check
+```
 
 ## API
 

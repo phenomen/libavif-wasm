@@ -46,6 +46,12 @@ jobs:
       - name: Test in Node
         run: node --test test/node/*.test.mjs
 
+      - name: Verify npm pack contents
+        run: node scripts/verify-pack.mjs
+
+      - name: Create npm tarball
+        run: npm pack
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -58,3 +64,4 @@ jobs:
             licenses/**
             versions.env
             README.md
+            phenomen-libavif-wasm-*.tgz
