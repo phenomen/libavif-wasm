@@ -1,7 +1,7 @@
 {
   "name": "@phenomen/libavif-wasm",
   "version": "1.4.2-2",
-  "description": "WebAssembly port of libavif with separate decode (dav1d) and encode (libaom) ES modules for browsers, Node 20+, and Edge/Workers.",
+  "description": "WebAssembly port of libavif with separate decode (dav1d) and encode (libaom) ES modules for browsers, Node 22+, and Edge/Workers.",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

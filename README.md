@@ -94,8 +94,8 @@ Import decode from `@phenomen/libavif-wasm/decode` and encode from `@phenomen/li
 
 | Module | Raw | gzip-9 |
 | --- | --- | --- |
-| `decode.wasm` | 770.3 KiB (788,769 B) | 294.1 KiB (301,185 B) |
-| `encode.wasm` | 5.70 MiB (5,981,594 B) | 1.25 MiB (1,306,020 B) |
+| `decode.wasm` | 573.1 KiB (586,861 B) | 242.9 KiB (248,750 B) |
+| `encode.wasm` | 1.95 MiB (2,041,605 B) | 837.1 KiB (857,162 B) |
 
 ## Versions
 
