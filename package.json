@@ -1,6 +1,6 @@
 {
   "name": "@phenomen/libavif-wasm",
-  "version": "1.4.2",
+  "version": "1.4.2-2",
   "description": "WebAssembly port of libavif with separate decode (dav1d) and encode (libaom) ES modules for browsers, Node 20+, and Edge/Workers.",
   "license": "MIT",
   "type": "module",
@@ -42,10 +42,11 @@
     "sizes": "./scripts/measure-sizes.sh",
     "check-upstream": "node scripts/check-upstream.mjs",
     "prepack": "node scripts/prepack.mjs",
-    "pack:check": "node scripts/verify-pack.mjs"
+    "pack:check": "node scripts/verify-pack.mjs",
+    "publish:latest": "npm publish --access public --tag latest"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "repository": {
     "type": "git",

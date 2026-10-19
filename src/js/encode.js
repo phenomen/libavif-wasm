@@ -42,7 +42,7 @@ function normalizeSubsample(subsample) {
  * Encode 8-bit RGBA image data to AVIF.
  *
  * @param {{ data: ArrayBufferView | ArrayLike<number>, width: number, height: number }} image
- * @param {{ quality?: number, speed?: number, subsample?: 420 | 422 | 444 | 400 | "420" | "422" | "444" | "400", bitDepth?: 8 | 10 | 12 }} [options]
+ * @param {{ quality?: number, speed?: number, subsample?: 420 | 422 | 444 | 400 | "420" | "422" | "444" | "400", bitDepth?: 8 }} [options]
  * @returns {Promise<ArrayBuffer>}
  */
 export async function encode(image, options = {}) {
@@ -63,9 +63,8 @@ export async function encode(image, options = {}) {
   const quality = options.quality ?? 60;
   const speed = options.speed ?? 6;
   const subsample = normalizeSubsample(options.subsample);
-  const bitDepth = options.bitDepth ?? 8;
-  if (bitDepth !== 8 && bitDepth !== 10 && bitDepth !== 12) {
-    throw new TypeError("bitDepth must be 8, 10, or 12");
+  if (options.bitDepth !== undefined && options.bitDepth !== 8) {
+    throw new TypeError("bitDepth must be 8");
   }
 
   const inPtr = module._avif_wasm_malloc(expected);
@@ -82,7 +81,6 @@ export async function encode(image, options = {}) {
     quality,
     speed,
     subsample,
-    bitDepth,
     sizePtr,
   );
   module._avif_wasm_free(inPtr);

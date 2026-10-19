@@ -65,13 +65,16 @@ describe("encode + round-trip", () => {
     assert.equal(again.data.length, decoded.data.length);
   });
 
-  it("accepts 444 / 10-bit encode options", async () => {
+  it("encodes 444 and rejects 10-bit", async () => {
     const src = solid(8, 8, 255, 0, 0);
+    await assert.rejects(
+      () => encodeApi.encode(src, { quality: 70, speed: 10, subsample: 444, bitDepth: 10 }),
+      /bitDepth must be 8/,
+    );
     const avif = await encodeApi.encode(src, {
       quality: 70,
       speed: 10,
       subsample: 444,
-      bitDepth: 10,
     });
     const image = await decodeApi.decode(avif);
     assert.equal(image.width, 8);

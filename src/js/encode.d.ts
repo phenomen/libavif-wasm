@@ -1,7 +1,7 @@
 import type { AvifImageData } from "./decode.js";
 
 export type ChromaSubsampling = 420 | 422 | 444 | 400 | "420" | "422" | "444" | "400";
-export type BitDepth = 8 | 10 | 12;
+export type BitDepth = 8;
 
 export interface EncodeOptions {
   /** 0 (worst) – 100 (lossless). Default 60. */
@@ -10,7 +10,7 @@ export interface EncodeOptions {
   speed?: number;
   /** Chroma subsampling. Default 420. */
   subsample?: ChromaSubsampling;
-  /** Output YUV bit depth. Input pixels stay 8-bit RGBA. Default 8. */
+  /** Must be 8. 10- and 12-bit encoding is not built. */
   bitDepth?: BitDepth;
 }
 

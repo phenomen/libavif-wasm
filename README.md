@@ -83,7 +83,7 @@ encode(
     quality?: number     // 0–100, default 60
     speed?: number       // 0 (slowest / best) – 10 (fastest), default 6
     subsample?: 420 | 422 | 444 | 400
-    bitDepth?: 8 | 10 | 12
+    bitDepth?: 8         // only 8 is supported
   },
 ): Promise<ArrayBuffer>
 ```
@@ -113,8 +113,8 @@ Pins live in [`versions.env`](./versions.env).
 ## Limitations
 
 - Still images only (no animated AVIF).
-- Decode output is 8-bit RGBA.
-- Encode input is 8-bit RGBA; `bitDepth` 10/12 only affects the YUV payload.
+- Decode output is 8-bit RGBA. 10- and 12-bit AVIF still decodes.
+- Encode input is 8-bit RGBA, and the encoded AVIF is 8-bit.
 - Single-threaded. Call `init()` once per isolate.
 
 ## Build from source

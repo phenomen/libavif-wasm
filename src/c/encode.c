@@ -1,5 +1,6 @@
 // Encode-only C glue for libavif + libaom (+ libyuv / libsharpyuv).
-// Input is 8-bit RGBA ImageData; output is a malloc'd AVIF byte buffer.
+// Input is 8-bit RGBA. The encoder is built without high bit depth, so the
+// AVIF payload is 8-bit as well. Output is a malloc'd AVIF byte buffer.
 
 #include <avif/avif.h>
 #include <stdint.h>
@@ -60,7 +61,7 @@ static int has_transparency(const uint8_t *rgba, int width, int height) {
 // On failure: NULL and avif_wasm_last_error() is set.
 EMSCRIPTEN_KEEPALIVE
 uint8_t *avif_wasm_encode(const uint8_t *rgba, int width, int height, int quality, int speed,
-                          int subsample, int bit_depth, int *out_size) {
+                          int subsample, int *out_size) {
     g_error[0] = '\0';
     if (out_size) {
         *out_size = 0;
@@ -81,13 +82,9 @@ uint8_t *avif_wasm_encode(const uint8_t *rgba, int width, int height, int qualit
     if (speed > 10) {
         speed = 10;
     }
-    if (bit_depth != 8 && bit_depth != 10 && bit_depth != 12) {
-        set_error("bitDepth must be 8, 10, or 12");
-        return NULL;
-    }
 
     avifPixelFormat format = subsample_to_format(subsample);
-    avifImage *image = avifImageCreate(width, height, bit_depth, format);
+    avifImage *image = avifImageCreate(width, height, 8, format);
     if (!image) {
         set_error("avifImageCreate failed");
         return NULL;

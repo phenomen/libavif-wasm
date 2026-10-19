@@ -32,7 +32,10 @@ VENDOR="${ROOT}/vendor"
 BUILD="${ROOT}/build"
 PREFIX="${BUILD}/prefix"
 DIST="${ROOT}/dist"
-COMMON_FLAGS=(-O3 -msimd128 -fno-exceptions -fno-rtti)
+# -Os balances size and speed (-O3 inlines a lot, -Oz is slower).
+# -flto has to be set here so the static libraries are bitcode; the final
+# link cannot LTO objects compiled without it. -msimd128 keeps autovectorization.
+COMMON_FLAGS=(-Os -flto -msimd128 -fno-exceptions -fno-rtti)
 export CFLAGS="${COMMON_FLAGS[*]}"
 export CXXFLAGS="${COMMON_FLAGS[*]}"
 export CMAKE_BUILD_PARALLEL_LEVEL="${JOBS}"
@@ -75,7 +78,8 @@ if [[ ! -f "${PREFIX}/lib/libdav1d.a" ]]; then
     --prefix "${PREFIX}" \
     --libdir lib \
     --default-library static \
-    --buildtype release \
+    --buildtype minsize \
+    -Db_lto=true \
     -Denable_asm=false \
     -Denable_tools=false \
     -Denable_examples=false \
@@ -92,7 +96,7 @@ if [[ ! -f "${PREFIX}/lib/libaom.a" ]]; then
   echo "==> building libaom ${AOM_VERSION}"
   rm -rf "${BUILD}/aom"
   emcmake cmake -S "${VENDOR}/aom" -B "${BUILD}/aom" \
-    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_BUILD_TYPE=MinSizeRel \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
     -DAOM_TARGET_CPU=generic \
     -DENABLE_DOCS=0 \
@@ -107,7 +111,8 @@ if [[ ! -f "${PREFIX}/lib/libaom.a" ]]; then
     -DCONFIG_AV1_DECODER=0 \
     -DCONFIG_AV1_ENCODER=1 \
     -DCONFIG_MULTITHREAD=0 \
-    -DCONFIG_AV1_HIGHBITDEPTH=1 \
+    -DCONFIG_AV1_HIGHBITDEPTH=0 \
+    -DCONFIG_DENOISE=0 \
     -DBUILD_SHARED_LIBS=0
   cmake --build "${BUILD}/aom" --target aom --parallel "${JOBS}"
   # emscripten + encode-only sometimes skips aom.pc / aomenc; install the
@@ -129,7 +134,7 @@ if [[ ! -f "${PREFIX}/lib/libyuv.a" ]]; then
   echo "==> building libyuv ${LIBYUV_VERSION}"
   rm -rf "${BUILD}/libyuv"
   emcmake cmake -S "${VENDOR}/libyuv" -B "${BUILD}/libyuv" \
-    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_BUILD_TYPE=MinSizeRel \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
     -DUNIT_TEST=OFF \
     -DJPEG_FOUND=OFF \
@@ -150,7 +155,7 @@ if [[ ! -f "${PREFIX}/lib/libsharpyuv.a" ]]; then
   echo "==> building libsharpyuv ${LIBWEBP_VERSION}"
   rm -rf "${BUILD}/libwebp"
   emcmake cmake -S "${VENDOR}/libwebp" -B "${BUILD}/libwebp" \
-    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_BUILD_TYPE=MinSizeRel \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
     -DBUILD_SHARED_LIBS=OFF \
     -DWEBP_BUILD_ANIM_UTILS=OFF \
@@ -186,7 +191,7 @@ fi
 echo "==> building libavif ${LIBAVIF_VERSION} (decode)"
 rm -rf "${BUILD}/libavif-decode"
 emcmake cmake -S "${VENDOR}/libavif" -B "${BUILD}/libavif-decode" \
-  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_BUILD_TYPE=MinSizeRel \
   -DCMAKE_INSTALL_PREFIX="${BUILD}/prefix-decode" \
   -DBUILD_SHARED_LIBS=OFF \
   -DAVIF_CODEC_DAV1D=SYSTEM \
@@ -210,7 +215,7 @@ cmake --install "${BUILD}/libavif-decode"
 echo "==> building libavif ${LIBAVIF_VERSION} (encode)"
 rm -rf "${BUILD}/libavif-encode"
 emcmake cmake -S "${VENDOR}/libavif" -B "${BUILD}/libavif-encode" \
-  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_BUILD_TYPE=MinSizeRel \
   -DCMAKE_INSTALL_PREFIX="${BUILD}/prefix-encode" \
   -DBUILD_SHARED_LIBS=OFF \
   -DAVIF_CODEC_AOM=SYSTEM \
@@ -236,7 +241,7 @@ cmake --install "${BUILD}/libavif-encode"
 # ENVIRONMENT=web,worker keeps Node fs/path out of the glue. Instantiation is
 # always via an imported WebAssembly.Module, so no fetch/locateFile is used.
 LINK_FLAGS=(
-  -O3
+  -Os
   -flto
   -msimd128
   --no-entry
