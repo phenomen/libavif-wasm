@@ -4,6 +4,7 @@
 
 #include <avif/avif.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -33,6 +34,14 @@ void *avif_wasm_malloc(size_t n) { return malloc(n); }
 EMSCRIPTEN_KEEPALIVE
 void avif_wasm_free(void *p) { free(p); }
 
+static void set_result_error(avifResult result, const avifDiagnostics *diag) {
+    if (diag && diag->error[0]) {
+        snprintf(g_error, sizeof(g_error), "%s: %s", avifResultToString(result), diag->error);
+    } else {
+        set_error(avifResultToString(result));
+    }
+}
+
 static avifPixelFormat subsample_to_format(int subsample) {
     switch (subsample) {
         case 444:
@@ -57,11 +66,13 @@ static int has_transparency(const uint8_t *rgba, int width, int height) {
 }
 
 // subsample: 420, 422, 444, or 400.
+// lossless: nonzero forces 4:4:4, the identity matrix, and quantizer 0, so
+// decoding returns the exact input pixels. quality and subsample are ignored.
 // On success: malloc'd AVIF bytes; *out_size is the length.
 // On failure: NULL and avif_wasm_last_error() is set.
 EMSCRIPTEN_KEEPALIVE
 uint8_t *avif_wasm_encode(const uint8_t *rgba, int width, int height, int quality, int speed,
-                          int subsample, int *out_size) {
+                          int subsample, int lossless, int *out_size) {
     g_error[0] = '\0';
     if (out_size) {
         *out_size = 0;
@@ -83,6 +94,11 @@ uint8_t *avif_wasm_encode(const uint8_t *rgba, int width, int height, int qualit
         speed = 10;
     }
 
+    if (lossless) {
+        quality = AVIF_QUALITY_LOSSLESS;
+        subsample = 444;
+    }
+
     avifPixelFormat format = subsample_to_format(subsample);
     avifImage *image = avifImageCreate(width, height, 8, format);
     if (!image) {
@@ -92,7 +108,9 @@ uint8_t *avif_wasm_encode(const uint8_t *rgba, int width, int height, int qualit
 
     image->colorPrimaries = AVIF_COLOR_PRIMARIES_BT709;
     image->transferCharacteristics = AVIF_TRANSFER_CHARACTERISTICS_SRGB;
-    image->matrixCoefficients = AVIF_MATRIX_COEFFICIENTS_BT601;
+    // Identity stores RGB as-is, which is what makes 8-bit 4:4:4 lossless.
+    image->matrixCoefficients =
+        lossless ? AVIF_MATRIX_COEFFICIENTS_IDENTITY : AVIF_MATRIX_COEFFICIENTS_BT601;
     image->yuvRange = AVIF_RANGE_FULL;
 
     avifRGBImage rgb;
@@ -107,7 +125,7 @@ uint8_t *avif_wasm_encode(const uint8_t *rgba, int width, int height, int qualit
 
     avifResult result = avifImageRGBToYUV(image, &rgb);
     if (result != AVIF_RESULT_OK) {
-        set_error(avifResultToString(result));
+        set_result_error(result, NULL);
         avifImageDestroy(image);
         return NULL;
     }
@@ -125,27 +143,23 @@ uint8_t *avif_wasm_encode(const uint8_t *rgba, int width, int height, int qualit
 
     avifRWData output = AVIF_DATA_EMPTY;
     result = avifEncoderWrite(encoder, image, &output);
+    if (result != AVIF_RESULT_OK) {
+        set_result_error(result, &encoder->diag);
+    }
     avifEncoderDestroy(encoder);
     avifImageDestroy(image);
 
     if (result != AVIF_RESULT_OK) {
-        set_error(avifResultToString(result));
         avifRWDataFree(&output);
         return NULL;
     }
 
-    uint8_t *out = (uint8_t *)malloc(output.size);
-    if (!out) {
-        set_error("out of memory");
-        avifRWDataFree(&output);
-        return NULL;
-    }
-    memcpy(out, output.data, output.size);
+    // avifAlloc is plain malloc, so hand the buffer to JS as-is; it is
+    // released with avif_wasm_free like every other returned pointer.
     if (out_size) {
         *out_size = (int)output.size;
     }
-    avifRWDataFree(&output);
-    return out;
+    return output.data;
 }
 
 #ifdef __cplusplus

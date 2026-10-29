@@ -1,5 +1,6 @@
-# Reproducible toolchain. Version is read from versions.env at image build time
-# so bumping EMSDK_VERSION rebuilds against a new official emscripten/emsdk tag.
+# Reproducible toolchain on the official emscripten/emsdk image.
+# scripts/docker-build.sh passes EMSDK_VERSION from versions.env; the default
+# here only applies to a bare `docker build`.
 ARG EMSDK_VERSION=6.0.12
 FROM emscripten/emsdk:${EMSDK_VERSION}
 
@@ -17,7 +18,6 @@ RUN apt-get update \
 
 WORKDIR /src
 
-# The official image entrypoint activates emsdk. Mount the repo at /src and run:
-#   docker build --build-arg EMSDK_VERSION=6.0.12 -t libavif-wasm-builder .
-#   docker run --rm -v "$PWD":/src -u "$(id -u):$(id -g)" libavif-wasm-builder ./scripts/build.sh
+# The official image entrypoint activates emsdk. The repo is mounted at /src:
+#   npm run build:docker   (or ./scripts/docker-build.sh)
 CMD ["./scripts/build.sh"]

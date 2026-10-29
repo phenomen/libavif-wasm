@@ -1,6 +1,6 @@
 {
   "name": "@phenomen/libavif-wasm",
-  "version": "1.4.2-2",
+  "version": "1.4.203",
   "description": "WebAssembly port of libavif with separate decode (dav1d) and encode (libaom) ES modules for browsers, Node 22+, and Edge/Workers.",
   "license": "MIT",
   "type": "module",
@@ -10,18 +10,24 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "default": "./dist/index.js"
     },
     "./decode": {
       "types": "./dist/decode.d.ts",
-      "import": "./dist/decode.js"
+      "default": "./dist/decode.js"
     },
     "./encode": {
       "types": "./dist/encode.d.ts",
-      "import": "./dist/encode.js"
+      "default": "./dist/encode.js"
     },
-    "./decode.wasm": "./dist/decode.wasm",
-    "./encode.wasm": "./dist/encode.wasm",
+    "./decode.wasm": {
+      "types": "./dist/wasm.d.ts",
+      "default": "./dist/decode.wasm"
+    },
+    "./encode.wasm": {
+      "types": "./dist/wasm.d.ts",
+      "default": "./dist/encode.wasm"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -38,12 +44,13 @@
   },
   "scripts": {
     "build": "./scripts/build.sh",
+    "build:docker": "./scripts/docker-build.sh",
     "test": "node --test test/node/*.test.mjs",
     "sizes": "./scripts/measure-sizes.sh",
     "check-upstream": "node scripts/check-upstream.mjs",
     "prepack": "node scripts/prepack.mjs",
-    "pack:check": "node scripts/verify-pack.mjs",
-    "publish:latest": "npm publish --access public --tag latest"
+    "prepublishOnly": "node scripts/prepublish.mjs && npm test",
+    "pack:check": "node scripts/verify-pack.mjs"
   },
   "engines": {
     "node": ">=22"

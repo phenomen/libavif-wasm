@@ -1,0 +1,3 @@
+# The Dockerfile copies nothing; the repo is bind-mounted at run time.
+# Ignoring everything keeps vendor/ and build/ out of the build context.
+*

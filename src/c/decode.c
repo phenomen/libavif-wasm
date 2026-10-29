@@ -3,6 +3,7 @@
 
 #include <avif/avif.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -32,6 +33,14 @@ void *avif_wasm_malloc(size_t n) { return malloc(n); }
 EMSCRIPTEN_KEEPALIVE
 void avif_wasm_free(void *p) { free(p); }
 
+static void set_result_error(avifResult result, const avifDiagnostics *diag) {
+    if (diag && diag->error[0]) {
+        snprintf(g_error, sizeof(g_error), "%s: %s", avifResultToString(result), diag->error);
+    } else {
+        set_error(avifResultToString(result));
+    }
+}
+
 // On success: malloc'd buffer of [int32 width][int32 height][RGBA pixels].
 // On failure: NULL and avif_wasm_last_error() is set.
 EMSCRIPTEN_KEEPALIVE
@@ -42,70 +51,66 @@ uint8_t *avif_wasm_decode(const uint8_t *data, size_t size) {
         return NULL;
     }
 
+    // Declared up front so the cleanup gotos never jump past an initializer.
+    uint8_t *out = NULL;
+    avifImage *image = NULL;
+    avifRGBImage rgb;
+    avifResult result;
     avifDecoder *decoder = avifDecoderCreate();
     if (!decoder) {
         set_error("avifDecoderCreate failed");
         return NULL;
     }
     decoder->maxThreads = 1;
+    // Metadata is never returned to JS, so skip copying it.
+    decoder->ignoreExif = AVIF_TRUE;
+    decoder->ignoreXMP = AVIF_TRUE;
 
-    avifImage *image = avifImageCreateEmpty();
+    image = avifImageCreateEmpty();
     if (!image) {
         set_error("avifImageCreateEmpty failed");
-        avifDecoderDestroy(decoder);
-        return NULL;
+        goto cleanup;
     }
 
-    avifResult result = avifDecoderReadMemory(decoder, image, data, size);
+    result = avifDecoderReadMemory(decoder, image, data, size);
     if (result != AVIF_RESULT_OK) {
-        set_error(avifResultToString(result));
-        avifImageDestroy(image);
-        avifDecoderDestroy(decoder);
-        return NULL;
+        set_result_error(result, &decoder->diag);
+        goto cleanup;
     }
 
-    avifRGBImage rgb;
     memset(&rgb, 0, sizeof(rgb));
     avifRGBImageSetDefaults(&rgb, image);
     rgb.format = AVIF_RGB_FORMAT_RGBA;
     rgb.depth = 8;
     rgb.maxThreads = 1;
+    rgb.rowBytes = rgb.width * 4u;
 
-    result = avifRGBImageAllocatePixels(&rgb);
-    if (result != AVIF_RESULT_OK) {
-        set_error(avifResultToString(result));
-        avifImageDestroy(image);
-        avifDecoderDestroy(decoder);
-        return NULL;
+    // Convert straight into the returned buffer instead of a separate
+    // RGB allocation, saving one full-frame copy and its peak memory.
+    out = (uint8_t *)malloc(8u + (size_t)rgb.rowBytes * (size_t)rgb.height);
+    if (!out) {
+        set_error("out of memory");
+        goto cleanup;
     }
+    rgb.pixels = out + 8;
 
     result = avifImageYUVToRGB(image, &rgb);
     if (result != AVIF_RESULT_OK) {
-        set_error(avifResultToString(result));
-        avifRGBImageFreePixels(&rgb);
-        avifImageDestroy(image);
-        avifDecoderDestroy(decoder);
-        return NULL;
+        set_result_error(result, NULL);
+        free(out);
+        out = NULL;
+        goto cleanup;
     }
 
-    const int width = (int)rgb.width;
-    const int height = (int)rgb.height;
-    const size_t pixels = (size_t)width * (size_t)height * 4u;
-    uint8_t *out = (uint8_t *)malloc(8u + pixels);
-    if (!out) {
-        set_error("out of memory");
-        avifRGBImageFreePixels(&rgb);
-        avifImageDestroy(image);
-        avifDecoderDestroy(decoder);
-        return NULL;
+    {
+        int32_t dims[2] = {(int32_t)rgb.width, (int32_t)rgb.height};
+        memcpy(out, dims, 8);
     }
 
-    int32_t dims[2] = {(int32_t)width, (int32_t)height};
-    memcpy(out, dims, 8);
-    memcpy(out + 8, rgb.pixels, pixels);
-
-    avifRGBImageFreePixels(&rgb);
-    avifImageDestroy(image);
+cleanup:
+    if (image) {
+        avifImageDestroy(image);
+    }
     avifDecoderDestroy(decoder);
     return out;
 }

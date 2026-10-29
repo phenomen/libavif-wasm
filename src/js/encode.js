@@ -1,32 +1,20 @@
 import createEncodeModule from "./codec/encode.mjs";
-import { instantiateFromModule, readCString } from "./instantiate.js";
+import { createLoader, readCString, tryUrl } from "./instantiate.js";
 
-/** @type {Promise<object> | null} */
-let modulePromise = null;
+/** URL of the encode wasm, or undefined in runtimes without import.meta.url. */
+export const wasmUrl = tryUrl(() => new URL("./encode.wasm", import.meta.url));
 
-/** URL of the encode wasm, for Node or any runtime that reads files. */
-export const wasmUrl = new URL("./encode.wasm", import.meta.url);
+const loader = createLoader(createEncodeModule, wasmUrl, "encode");
 
 /**
- * Prepare the encode module from an already-compiled WebAssembly.Module.
- * Required before encode() in every environment.
+ * Load the encode module. Required once before encode(); later calls are
+ * no-ops. With no argument, loads encode.wasm from next to this file (fetch
+ * in browsers, the filesystem in Node, Deno and Bun).
  *
- * @param {WebAssembly.Module} wasmModule
+ * @param {import("./decode.js").InitInput | Promise<import("./decode.js").InitInput>} [source]
  * @returns {Promise<void>}
  */
-export async function init(wasmModule) {
-  modulePromise = instantiateFromModule(createEncodeModule, wasmModule);
-  await modulePromise;
-}
-
-function requireModule() {
-  if (!modulePromise) {
-    throw new Error(
-      "AVIF encode module is not initialized. Import encode.wasm and call init(module) first.",
-    );
-  }
-  return modulePromise;
-}
+export const init = loader.init;
 
 /**
  * @param {420 | 422 | 444 | 400 | "420" | "422" | "444" | "400" | undefined} subsample
@@ -39,64 +27,96 @@ function normalizeSubsample(subsample) {
 }
 
 /**
+ * @param {unknown} value
+ * @param {string} name
+ * @param {number} fallback
+ * @param {number} max
+ */
+function intInRange(value, name, fallback, max) {
+  if (value === undefined) return fallback;
+  if (typeof value !== "number" || !(value >= 0 && value <= max)) {
+    throw new RangeError(`${name} must be a number from 0 to ${max}, got ${value}`);
+  }
+  return Math.round(value);
+}
+
+/**
+ * View 8-bit data as bytes without copying; convert anything else.
+ *
+ * @param {ArrayBufferView | ArrayLike<number>} data
+ * @returns {Uint8Array}
+ */
+function toBytes(data) {
+  if (ArrayBuffer.isView(data) && (data.BYTES_PER_ELEMENT ?? 1) === 1) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  }
+  return Uint8ClampedArray.from(/** @type {ArrayLike<number>} */ (data));
+}
+
+/**
  * Encode 8-bit RGBA image data to AVIF.
  *
  * @param {{ data: ArrayBufferView | ArrayLike<number>, width: number, height: number }} image
- * @param {{ quality?: number, speed?: number, subsample?: 420 | 422 | 444 | 400 | "420" | "422" | "444" | "400", bitDepth?: 8 }} [options]
+ * @param {import("./encode.js").EncodeOptions} [options]
  * @returns {Promise<ArrayBuffer>}
  */
 export async function encode(image, options = {}) {
-  const module = await requireModule();
-  if (!image || !image.data || image.width <= 0 || image.height <= 0) {
-    throw new TypeError("encode() expected { data, width, height }");
+  const module = await loader.getModule();
+  const { data, width, height } = image ?? {};
+  if (!data || !Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
+    throw new TypeError("encode() expected { data, width, height } with positive integer dimensions");
   }
 
-  const expected = image.width * image.height * 4;
-  const pixels = image.data instanceof Uint8Array
-    ? image.data
-    : new Uint8Array(image.data.buffer ?? image.data, image.data.byteOffset ?? 0, image.data.byteLength ?? expected);
-
+  const expected = width * height * 4;
+  const pixels = toBytes(data);
   if (pixels.byteLength < expected) {
     throw new TypeError(`image.data is ${pixels.byteLength} bytes; expected at least ${expected} (RGBA)`);
   }
 
-  const quality = options.quality ?? 60;
-  const speed = options.speed ?? 6;
-  const subsample = normalizeSubsample(options.subsample);
+  const lossless = options.lossless === true;
+  const quality = intInRange(options.quality, "quality", 60, 100);
+  const speed = intInRange(options.speed, "speed", 6, 10);
+  const subsample = lossless && options.subsample === undefined ? 444 : normalizeSubsample(options.subsample);
+  if (lossless && subsample !== 444) {
+    throw new TypeError("lossless encoding requires subsample 444");
+  }
   if (options.bitDepth !== undefined && options.bitDepth !== 8) {
     throw new TypeError("bitDepth must be 8");
   }
 
   const inPtr = module._avif_wasm_malloc(expected);
-  if (!inPtr) {
+  const sizePtr = module._avif_wasm_malloc(4);
+  if (!inPtr || !sizePtr) {
+    module._avif_wasm_free(inPtr);
+    module._avif_wasm_free(sizePtr);
     throw new Error("Failed to allocate wasm memory for RGBA input");
   }
-  module.HEAPU8.set(pixels.subarray(0, expected), inPtr);
 
-  const sizePtr = module._avif_wasm_malloc(4);
-  const outPtr = module._avif_wasm_encode(
-    inPtr,
-    image.width,
-    image.height,
-    quality,
-    speed,
-    subsample,
-    sizePtr,
-  );
-  module._avif_wasm_free(inPtr);
+  let outPtr;
+  let size = 0;
+  try {
+    module.HEAPU8.set(pixels.subarray(0, expected), inPtr);
+    outPtr = module._avif_wasm_encode(
+      inPtr,
+      width,
+      height,
+      quality,
+      speed,
+      subsample,
+      lossless ? 1 : 0,
+      sizePtr,
+    );
+    // Read HEAPU8 again: encoding may have grown (and replaced) wasm memory.
+    size = new DataView(module.HEAPU8.buffer, module.HEAPU8.byteOffset + sizePtr, 4).getInt32(0, true);
+  } finally {
+    module._avif_wasm_free(inPtr);
+    module._avif_wasm_free(sizePtr);
+  }
 
   if (!outPtr) {
-    module._avif_wasm_free(sizePtr);
     const msg = readCString(module, module._avif_wasm_last_error());
     throw new Error(msg || "AVIF encode failed");
   }
-
-  const size = new DataView(
-    module.HEAPU8.buffer,
-    module.HEAPU8.byteOffset + sizePtr,
-    4,
-  ).getInt32(0, true);
-  module._avif_wasm_free(sizePtr);
 
   const copy = module.HEAPU8.slice(outPtr, outPtr + size);
   module._avif_wasm_free(outPtr);
