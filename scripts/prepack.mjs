@@ -27,6 +27,7 @@ export const REQUIRED_PACK_FILES = [
   "dist/encode.js",
   "dist/encode.d.ts",
   "dist/instantiate.js",
+  "dist/wasm.d.ts",
   "dist/codec/decode.mjs",
   "dist/codec/encode.mjs",
   "dist/decode.wasm",

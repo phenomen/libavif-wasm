@@ -1,6 +1,6 @@
 # @phenomen/libavif-wasm
 
-WebAssembly port of [libavif](https://github.com/AOMediaCodec/libavif) with separate decode and encode ES modules for browsers, Node 20+, and Edge/Workers.
+WebAssembly port of [libavif](https://github.com/AOMediaCodec/libavif) with separate decode and encode ES modules for browsers, Node 22+, Deno, Bun, and Edge/Workers.
 
 ## Install
 
@@ -8,45 +8,43 @@ WebAssembly port of [libavif](https://github.com/AOMediaCodec/libavif) with sepa
 npm install @phenomen/libavif-wasm
 ```
 
-Call `init()` once per isolate with a `WebAssembly.Module` before `decode` or `encode`.
+Call `init()` before `decode` or `encode`. It loads the module once; calling it again returns the same promise, so it is safe to call per request.
 
 ## Browser
 
 ```ts
 import { init, decode } from "@phenomen/libavif-wasm/decode";
-import decodeWasm from "@phenomen/libavif-wasm/decode.wasm";
 
-await init(decodeWasm);
+await init(); // fetches decode.wasm next to the module
 const { data, width, height } = await decode(await fetch("/photo.avif").then((r) => r.arrayBuffer()));
 ctx.putImageData(new ImageData(data, width, height), 0, 0);
 ```
 
 ```ts
 import { init, encode } from "@phenomen/libavif-wasm/encode";
-import encodeWasm from "@phenomen/libavif-wasm/encode.wasm";
 
-await init(encodeWasm);
+await init();
 const avif = await encode(imageData, { quality: 70, speed: 6, subsample: 420 });
 ```
 
-If your bundler gives you bytes or a URL instead of a `WebAssembly.Module`, compile once with `new WebAssembly.Module(bytes)` and pass that to `init`.
+Vite, webpack 5, Parcel and Rollup (with an asset plugin) pick up the `.wasm` file from the `new URL("./decode.wasm", import.meta.url)` reference and serve it automatically. To host the file yourself, pass its URL or a `fetch` promise: `await init(fetch("/wasm/decode.wasm"))`.
 
-## Node / Vercel Function
+## Node, Deno, Bun
 
 ```ts
 import { readFile } from "node:fs/promises";
-import { init, decode, wasmUrl } from "@phenomen/libavif-wasm/decode";
+import { init, decode } from "@phenomen/libavif-wasm/decode";
 
-await init(new WebAssembly.Module(await readFile(wasmUrl)));
-const image = await decode((await readFile("./photo.avif")).buffer);
+await init(); // reads decode.wasm from node_modules
+const image = await decode(await readFile("./photo.avif"));
 ```
 
 ```ts
-import { readFile } from "node:fs/promises";
-import { init, encode, wasmUrl } from "@phenomen/libavif-wasm/encode";
+import { init, encode } from "@phenomen/libavif-wasm/encode";
 
-await init(new WebAssembly.Module(await readFile(wasmUrl)));
+await init();
 const avif = await encode(image, { quality: 60, speed: 8 });
+const lossless = await encode(image, { lossless: true });
 ```
 
 ## Edge / Workers
@@ -58,37 +56,42 @@ import decodeWasm from "@phenomen/libavif-wasm/decode.wasm";
 export const runtime = "edge";
 
 export async function POST(req: Request) {
-  await init(decodeWasm);
+  await init(decodeWasm); // instantiates on the first request only
   const { width, height } = await decode(await req.arrayBuffer());
   return Response.json({ width, height });
 }
 ```
 
-Cloudflare Workers and Vercel Edge treat `import … from "*.wasm"` as a `WebAssembly.Module`. Configure the bundler to emit wasm as a module import.
+Cloudflare Workers and Vercel Edge import `*.wasm` as a `WebAssembly.Module` (typed by this package). These runtimes cannot compile wasm from bytes at run time, so pass the imported module.
 
 ## API
 
 ```ts
-init(wasmModule: WebAssembly.Module): Promise<void>
+type InitInput = WebAssembly.Module | BufferSource | Response | URL | string
+
+init(source?: InitInput | Promise<InitInput>): Promise<void>
 
 decode(input: ArrayBuffer | ArrayBufferView): Promise<{
-  data: Uint8ClampedArray
+  data: Uint8ClampedArray   // straight (non-premultiplied) RGBA
   width: number
   height: number
 }>
 
 encode(
-  image: { data: ArrayLike<number>; width: number; height: number },
+  image: { data: Uint8ClampedArray | Uint8Array | ArrayLike<number>; width: number; height: number },
   options?: {
     quality?: number     // 0–100, default 60
     speed?: number       // 0 (slowest / best) – 10 (fastest), default 6
-    subsample?: 420 | 422 | 444 | 400
+    subsample?: 420 | 422 | 444 | 400   // default 420
+    lossless?: boolean   // exact pixels: 4:4:4, identity matrix; ignores quality
     bitDepth?: 8         // only 8 is supported
   },
 ): Promise<ArrayBuffer>
 ```
 
-Import decode from `@phenomen/libavif-wasm/decode` and encode from `@phenomen/libavif-wasm/encode`. Each has its own wasm file and `init`.
+Import decode from `@phenomen/libavif-wasm/decode` and encode from `@phenomen/libavif-wasm/encode`. Each has its own wasm file and `init`. The root export re-exports both as `initDecode` / `initEncode`.
+
+Invalid options throw `RangeError` / `TypeError`. Decode and encode errors carry libavif's message and diagnostics.
 
 ## Sizes
 
@@ -110,22 +113,26 @@ Import decode from `@phenomen/libavif-wasm/decode` and encode from `@phenomen/li
 
 Pins live in [`versions.env`](./versions.env).
 
+Package versions are `x.y.zzz`: `x.y.z` is the bundled libavif release and the last two digits count package revisions on top of it. `1.4.203` is revision 3 on libavif v1.4.2; the first build of a new libavif release is `x.y.z00`. Pin a libavif release with `~1.4.200`.
+
 ## Limitations
 
-- Still images only (no animated AVIF).
+- Still images only. Animated AVIF decodes its first frame.
 - Decode output is 8-bit RGBA. 10- and 12-bit AVIF still decodes.
-- Encode input is 8-bit RGBA, and the encoded AVIF is 8-bit.
-- Single-threaded. Call `init()` once per isolate.
+- Decode does not apply `irot`/`imir` orientation or convert to sRGB; pixels come out in the image's own color space.
+- Encode input is 8-bit RGBA, tagged as sRGB, and the encoded AVIF is 8-bit.
+- Single-threaded.
 
 ## Build from source
 
 ```bash
-docker build --build-arg EMSDK_VERSION=6.0.12 -t libavif-wasm-builder .
-docker run --rm -v "$PWD":/src -u "$(id -u):$(id -g)" libavif-wasm-builder ./scripts/build.sh
-node --test test/node/*.test.mjs
+npm run build:docker
+npm test
 ```
 
-Or run `./scripts/build.sh` with emsdk, Meson, Ninja, CMake, and pkg-config on `PATH`.
+`build:docker` builds the emsdk image pinned in `versions.env` and runs `./scripts/build.sh` inside it. You can also run `./scripts/build.sh` directly with emsdk, Meson, Ninja, CMake, and pkg-config on `PATH`. Dependencies are cached in `build/` and rebuilt when their version or flags change.
+
+`npm run check-upstream` compares the pins against the latest upstream releases.
 
 ## License
 

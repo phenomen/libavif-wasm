@@ -1,12 +1,17 @@
 #!/usr/bin/env node
-// Compare versions.env pins against the latest published releases.
-// Exit 0 when current, 1 when a newer release exists, 2 on lookup failure.
+// Compare versions.env pins against the latest upstream release tags.
+// Codecs and emsdk are checked against their newest stable tag; libyuv and
+// libsharpyuv against the revisions the pinned libavif release vendors.
+// Exit 0 when current, 1 when an update exists, 2 on lookup failure.
 
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const run = promisify(execFile);
 
 function parseEnv(text) {
   const out = {};
@@ -32,75 +37,71 @@ function cmpSemver(a, b) {
   return 0;
 }
 
-async function githubLatestRelease(repo) {
-  const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
-    headers: { Accept: "application/vnd.github+json", "User-Agent": "libavif-wasm-upstream-check" },
+// `git ls-remote` works the same for GitHub, googlesource and GitLab, and is
+// not rate limited like the GitHub API.
+async function latestStableTag(url) {
+  const { stdout } = await run("git", ["ls-remote", "--tags", "--refs", url], {
+    maxBuffer: 16 * 1024 * 1024,
   });
-  if (!res.ok) throw new Error(`GitHub ${repo}: HTTP ${res.status}`);
-  const json = await res.json();
-  return json.tag_name;
+  const tags = stdout
+    .split("\n")
+    .map((line) => line.split("refs/tags/")[1])
+    .map((name) => name && parseSemver(name))
+    .filter(Boolean)
+    .sort(cmpSemver);
+  if (!tags.length) throw new Error(`no release tags at ${url}`);
+  return tags.at(-1).tag;
 }
 
-async function githubLatestStableTag(repo) {
-  const res = await fetch(`https://api.github.com/repos/${repo}/tags?per_page=30`, {
-    headers: { Accept: "application/vnd.github+json", "User-Agent": "libavif-wasm-upstream-check" },
-  });
-  if (!res.ok) throw new Error(`GitHub ${repo} tags: HTTP ${res.status}`);
-  const json = await res.json();
-  const parsed = json.map((t) => parseSemver(t.name)).filter(Boolean);
-  parsed.sort(cmpSemver);
-  return parsed.at(-1)?.tag;
+// libavif's ext/*.cmd scripts record the dependency revisions it is tested with.
+async function libavifVendored(file, pattern) {
+  const url = `https://raw.githubusercontent.com/AOMediaCodec/libavif/${env.LIBAVIF_VERSION}/ext/${file}`;
+  const res = await fetch(url, { headers: { "User-Agent": "libavif-wasm-upstream-check" } });
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  const match = pattern.exec(await res.text());
+  if (!match) throw new Error(`${file}: revision not found`);
+  return match[1];
 }
 
-async function gitlabLatestTag(project) {
-  const res = await fetch(
-    `https://gitlab.com/api/v4/projects/${encodeURIComponent(project)}/repository/tags?per_page=10`,
-    { headers: { "User-Agent": "libavif-wasm-upstream-check" } },
-  );
-  if (!res.ok) throw new Error(`GitLab ${project}: HTTP ${res.status}`);
-  const json = await res.json();
-  const tag = json.find((t) => /^v?\d+\.\d+\.\d+$/.test(t.name));
-  return tag?.name;
-}
+const sameVersion = (a, b) => a.replace(/^v/, "") === b.replace(/^v/, "");
 
 const env = parseEnv(await readFile(join(root, "versions.env"), "utf8"));
 const checks = [
+  { name: "libavif", current: env.LIBAVIF_VERSION, latest: () => latestStableTag(env.LIBAVIF_URL) },
+  { name: "dav1d", current: env.DAV1D_VERSION, latest: () => latestStableTag(env.DAV1D_URL) },
+  { name: "libaom", current: env.AOM_VERSION, latest: () => latestStableTag(env.AOM_URL) },
   {
-    name: "libavif",
-    current: env.LIBAVIF_VERSION,
-    latest: () => githubLatestRelease("AOMediaCodec/libavif"),
+    name: "emsdk",
+    current: env.EMSDK_VERSION,
+    latest: () => latestStableTag("https://github.com/emscripten-core/emsdk.git"),
   },
   {
-    name: "dav1d",
-    current: env.DAV1D_VERSION,
-    // videolan/dav1d's GitHub "latest release" is a stale 0.1.0; use tags.
-    latest: () => githubLatestStableTag("videolan/dav1d"),
+    name: `libyuv (libavif ${env.LIBAVIF_VERSION})`,
+    current: env.LIBYUV_VERSION,
+    latest: () => libavifVendored("libyuv.cmd", /git checkout ([0-9a-f]+)/),
   },
   {
-    name: "libaom",
-    current: env.AOM_VERSION,
-    latest: async () =>
-      (await gitlabLatestTag("webmproject/libaom")) ??
-      (await githubLatestStableTag("webmproject/libaom")),
+    name: `libsharpyuv (libavif ${env.LIBAVIF_VERSION})`,
+    current: env.LIBWEBP_VERSION,
+    latest: () => libavifVendored("libsharpyuv.cmd", /git clone -b (\S+)/),
   },
 ];
 
-const updates = [];
-for (const check of checks) {
-  try {
-    const latest = await check.latest();
-    const current = check.current;
-    const changed = latest && latest !== current && `v${latest}` !== current && latest !== `v${current}`;
-    console.log(`${check.name}: pinned ${current}  latest ${latest}${changed ? "  UPDATE" : ""}`);
-    if (changed) {
-      updates.push({ name: check.name, current, latest });
-    }
-  } catch (err) {
-    console.error(`${check.name}: ${err.message}`);
+const results = await Promise.allSettled(checks.map((check) => check.latest()));
+let updates = 0;
+results.forEach((result, i) => {
+  const { name, current } = checks[i];
+  if (result.status === "rejected") {
+    console.error(`${name}: ${result.reason.message}`);
     process.exitCode = 2;
+    return;
   }
-}
+  const latest = result.value;
+  const changed = !sameVersion(latest, current);
+  if (changed) updates++;
+  console.log(`${name}: pinned ${current}  latest ${latest}${changed ? "  UPDATE" : ""}`);
+});
 
-if (updates.length && process.exitCode !== 2) {
+if (updates && process.exitCode !== 2) {
   process.exitCode = 1;
 }

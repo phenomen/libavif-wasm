@@ -1,31 +1,34 @@
 import createDecodeModule from "./codec/decode.mjs";
-import { instantiateFromModule, readCString } from "./instantiate.js";
+import { createLoader, readCString, tryUrl } from "./instantiate.js";
 
-/** @type {Promise<object> | null} */
-let modulePromise = null;
+/** URL of the decode wasm, or undefined in runtimes without import.meta.url. */
+export const wasmUrl = tryUrl(() => new URL("./decode.wasm", import.meta.url));
 
-/** URL of the decode wasm, for Node or any runtime that reads files. */
-export const wasmUrl = new URL("./decode.wasm", import.meta.url);
+const loader = createLoader(createDecodeModule, wasmUrl, "decode");
 
 /**
- * Prepare the decode module from an already-compiled WebAssembly.Module.
- * Required before decode() in every environment.
+ * Load the decode module. Required once before decode(); later calls are
+ * no-ops. With no argument, loads decode.wasm from next to this file (fetch
+ * in browsers, the filesystem in Node, Deno and Bun).
  *
- * @param {WebAssembly.Module} wasmModule
+ * @param {import("./decode.js").InitInput | Promise<import("./decode.js").InitInput>} [source]
  * @returns {Promise<void>}
  */
-export async function init(wasmModule) {
-  modulePromise = instantiateFromModule(createDecodeModule, wasmModule);
-  await modulePromise;
-}
+export const init = loader.init;
 
-function requireModule() {
-  if (!modulePromise) {
-    throw new Error(
-      "AVIF decode module is not initialized. Import decode.wasm and call init(module) first.",
-    );
+/**
+ * @param {unknown} input
+ * @returns {Uint8Array}
+ */
+function toBytes(input) {
+  if (input instanceof ArrayBuffer) return new Uint8Array(input);
+  if (ArrayBuffer.isView(input)) {
+    return new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
   }
-  return modulePromise;
+  if (typeof SharedArrayBuffer !== "undefined" && input instanceof SharedArrayBuffer) {
+    return new Uint8Array(input);
+  }
+  throw new TypeError("decode() expected an ArrayBuffer or ArrayBufferView");
 }
 
 /**
@@ -35,26 +38,30 @@ function requireModule() {
  * @returns {Promise<{ data: Uint8ClampedArray, width: number, height: number }>}
  */
 export async function decode(input) {
-  const module = await requireModule();
-  const bytes =
-    input instanceof ArrayBuffer
-      ? new Uint8Array(input)
-      : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+  const module = await loader.getModule();
+  const bytes = toBytes(input);
+  if (bytes.byteLength === 0) {
+    throw new TypeError("decode() received empty input");
+  }
 
   const inPtr = module._avif_wasm_malloc(bytes.byteLength);
   if (!inPtr) {
     throw new Error("Failed to allocate wasm memory for AVIF input");
   }
-  module.HEAPU8.set(bytes, inPtr);
-
-  const outPtr = module._avif_wasm_decode(inPtr, bytes.byteLength);
-  module._avif_wasm_free(inPtr);
+  let outPtr;
+  try {
+    module.HEAPU8.set(bytes, inPtr);
+    outPtr = module._avif_wasm_decode(inPtr, bytes.byteLength);
+  } finally {
+    module._avif_wasm_free(inPtr);
+  }
 
   if (!outPtr) {
     const msg = readCString(module, module._avif_wasm_last_error());
     throw new Error(msg || "AVIF decode failed");
   }
 
+  // Read HEAPU8 again: decoding may have grown (and replaced) wasm memory.
   const heap = module.HEAPU8;
   const view = new DataView(heap.buffer, heap.byteOffset + outPtr, 8);
   const width = view.getInt32(0, true);

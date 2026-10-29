@@ -23,7 +23,11 @@ for tool in emcc em++ emcmake emmake meson ninja cmake pkg-config; do
   }
 done
 
-echo "emcc:  $(emcc -v 2>&1 | head -n 1)"
+EMCC_VERSION="$(emcc -dumpversion)"
+echo "emcc:  ${EMCC_VERSION}"
+if [[ "${EMCC_VERSION}" != "${EMSDK_VERSION}" ]]; then
+  echo "warning: emcc ${EMCC_VERSION} does not match EMSDK_VERSION=${EMSDK_VERSION} in versions.env" >&2
+fi
 echo "meson: $(meson --version)"
 echo "cmake: $(cmake --version | head -n 1)"
 
@@ -48,6 +52,24 @@ export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_
 export EM_PKG_CONFIG_PATH="${PKG_CONFIG_PATH}"
 export CMAKE_PREFIX_PATH="${PREFIX}${CMAKE_PREFIX_PATH:+:${CMAKE_PREFIX_PATH}}"
 
+# Dependencies are cached in ${PREFIX}. A stamp next to each library records
+# the version, toolchain and configure flags it was built with, so changing any
+# of them (or versions.env) rebuilds that dependency instead of linking a stale
+# one. Usage: needs_build <name> <library> <key...>
+needs_build() {
+  local name="$1" lib="$2"
+  shift 2
+  STAMP_FILE="${PREFIX}/.${name}.stamp"
+  STAMP="$(printf '%s\n' "${EMCC_VERSION}" "${COMMON_FLAGS[*]}" "$@" | sha256sum | cut -d' ' -f1)"
+  [[ -f "${lib}" && -f "${STAMP_FILE}" && "$(cat "${STAMP_FILE}")" == "${STAMP}" ]] && return 1
+  rm -f "${STAMP_FILE}"
+  return 0
+}
+
+mark_built() {
+  echo "${STAMP}" > "${STAMP_FILE}"
+}
+
 write_pc() {
   local name="$1" version="$2" libs="$3"
   cat > "${PREFIX}/lib/pkgconfig/${name}.pc" <<EOF
@@ -67,7 +89,18 @@ EOF
 # ---------------------------------------------------------------------------
 # dav1d (decode) — Meson + Emscripten cross file, asm off
 # ---------------------------------------------------------------------------
-if [[ ! -f "${PREFIX}/lib/libdav1d.a" ]]; then
+DAV1D_ARGS=(
+  --default-library static
+  --buildtype minsize
+  -Db_lto=true
+  -Denable_asm=false
+  -Denable_tools=false
+  -Denable_examples=false
+  -Denable_tests=false
+  -Dlogging=false
+)
+if needs_build dav1d "${PREFIX}/lib/libdav1d.a" "${DAV1D_VERSION}" "${DAV1D_ARGS[@]}" \
+  "$(cat "${ROOT}/src/meson/emscripten-cross.ini")"; then
   echo "==> building dav1d ${DAV1D_VERSION}"
   rm -rf "${BUILD}/dav1d"
   CROSS_FILE="${BUILD}/emscripten-cross.ini"
@@ -77,43 +110,40 @@ if [[ ! -f "${PREFIX}/lib/libdav1d.a" ]]; then
     --cross-file "${CROSS_FILE}" \
     --prefix "${PREFIX}" \
     --libdir lib \
-    --default-library static \
-    --buildtype minsize \
-    -Db_lto=true \
-    -Denable_asm=false \
-    -Denable_tools=false \
-    -Denable_examples=false \
-    -Denable_tests=false \
-    -Dlogging=false
+    "${DAV1D_ARGS[@]}"
   meson compile -C "${BUILD}/dav1d" -j "${JOBS}"
   meson install -C "${BUILD}/dav1d"
+  mark_built
 fi
 
 # ---------------------------------------------------------------------------
 # libaom (encode) — generic CPU, no examples/tests, encode-focused
 # ---------------------------------------------------------------------------
-if [[ ! -f "${PREFIX}/lib/libaom.a" ]]; then
+AOM_ARGS=(
+  -DCMAKE_BUILD_TYPE=MinSizeRel
+  -DAOM_TARGET_CPU=generic
+  -DENABLE_DOCS=0
+  -DENABLE_EXAMPLES=0
+  -DENABLE_TESTDATA=0
+  -DENABLE_TESTS=0
+  -DENABLE_TOOLS=0
+  -DCONFIG_ACCOUNTING=0
+  -DCONFIG_INSPECTION=0
+  -DCONFIG_RUNTIME_CPU_DETECT=0
+  -DCONFIG_WEBM_IO=0
+  -DCONFIG_AV1_DECODER=0
+  -DCONFIG_AV1_ENCODER=1
+  -DCONFIG_MULTITHREAD=0
+  -DCONFIG_AV1_HIGHBITDEPTH=0
+  -DCONFIG_DENOISE=0
+  -DBUILD_SHARED_LIBS=0
+)
+if needs_build aom "${PREFIX}/lib/libaom.a" "${AOM_VERSION}" "${AOM_ARGS[@]}"; then
   echo "==> building libaom ${AOM_VERSION}"
   rm -rf "${BUILD}/aom"
   emcmake cmake -S "${VENDOR}/aom" -B "${BUILD}/aom" \
-    -DCMAKE_BUILD_TYPE=MinSizeRel \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
-    -DAOM_TARGET_CPU=generic \
-    -DENABLE_DOCS=0 \
-    -DENABLE_EXAMPLES=0 \
-    -DENABLE_TESTDATA=0 \
-    -DENABLE_TESTS=0 \
-    -DENABLE_TOOLS=0 \
-    -DCONFIG_ACCOUNTING=0 \
-    -DCONFIG_INSPECTION=0 \
-    -DCONFIG_RUNTIME_CPU_DETECT=0 \
-    -DCONFIG_WEBM_IO=0 \
-    -DCONFIG_AV1_DECODER=0 \
-    -DCONFIG_AV1_ENCODER=1 \
-    -DCONFIG_MULTITHREAD=0 \
-    -DCONFIG_AV1_HIGHBITDEPTH=0 \
-    -DCONFIG_DENOISE=0 \
-    -DBUILD_SHARED_LIBS=0
+    "${AOM_ARGS[@]}"
   cmake --build "${BUILD}/aom" --target aom --parallel "${JOBS}"
   # emscripten + encode-only sometimes skips aom.pc / aomenc; install the
   # static library and headers ourselves so cmake --install cannot abort.
@@ -125,20 +155,24 @@ if [[ ! -f "${PREFIX}/lib/libaom.a" ]]; then
   else
     write_pc aom "${AOM_VERSION#v}" "-laom -lm"
   fi
+  mark_built
 fi
 
 # ---------------------------------------------------------------------------
 # libyuv
 # ---------------------------------------------------------------------------
-if [[ ! -f "${PREFIX}/lib/libyuv.a" ]]; then
+LIBYUV_ARGS=(
+  -DCMAKE_BUILD_TYPE=MinSizeRel
+  -DUNIT_TEST=OFF
+  -DJPEG_FOUND=OFF
+  -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+)
+if needs_build libyuv "${PREFIX}/lib/libyuv.a" "${LIBYUV_VERSION}" "${LIBYUV_ARGS[@]}"; then
   echo "==> building libyuv ${LIBYUV_VERSION}"
   rm -rf "${BUILD}/libyuv"
   emcmake cmake -S "${VENDOR}/libyuv" -B "${BUILD}/libyuv" \
-    -DCMAKE_BUILD_TYPE=MinSizeRel \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
-    -DUNIT_TEST=OFF \
-    -DJPEG_FOUND=OFF \
-    -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+    "${LIBYUV_ARGS[@]}"
   cmake --build "${BUILD}/libyuv" --target yuv --parallel "${JOBS}"
   cmake --install "${BUILD}/libyuv" || true
   mkdir -p "${PREFIX}/include/libyuv"
@@ -146,30 +180,34 @@ if [[ ! -f "${PREFIX}/lib/libyuv.a" ]]; then
   cp -a "${BUILD}/libyuv/libyuv.a" "${PREFIX}/lib/" 2>/dev/null || \
     cp -a "${BUILD}/libyuv/"*/libyuv.a "${PREFIX}/lib/"
   write_pc libyuv "${LIBYUV_VERSION}" "-lyuv"
+  mark_built
 fi
 
 # ---------------------------------------------------------------------------
 # libsharpyuv (from libwebp)
 # ---------------------------------------------------------------------------
-if [[ ! -f "${PREFIX}/lib/libsharpyuv.a" ]]; then
+SHARPYUV_ARGS=(
+  -DCMAKE_BUILD_TYPE=MinSizeRel
+  -DBUILD_SHARED_LIBS=OFF
+  -DWEBP_BUILD_ANIM_UTILS=OFF
+  -DWEBP_BUILD_CWEBP=OFF
+  -DWEBP_BUILD_DWEBP=OFF
+  -DWEBP_BUILD_GIF2WEBP=OFF
+  -DWEBP_BUILD_IMG2WEBP=OFF
+  -DWEBP_BUILD_VWEBP=OFF
+  -DWEBP_BUILD_WEBPINFO=OFF
+  -DWEBP_BUILD_LIBWEBPMUX=OFF
+  -DWEBP_BUILD_WEBPMUX=OFF
+  -DWEBP_BUILD_EXTRAS=OFF
+  -DWEBP_USE_THREAD=OFF
+  -DWEBP_ENABLE_SIMD=OFF
+)
+if needs_build sharpyuv "${PREFIX}/lib/libsharpyuv.a" "${LIBWEBP_VERSION}" "${SHARPYUV_ARGS[@]}"; then
   echo "==> building libsharpyuv ${LIBWEBP_VERSION}"
   rm -rf "${BUILD}/libwebp"
   emcmake cmake -S "${VENDOR}/libwebp" -B "${BUILD}/libwebp" \
-    -DCMAKE_BUILD_TYPE=MinSizeRel \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DWEBP_BUILD_ANIM_UTILS=OFF \
-    -DWEBP_BUILD_CWEBP=OFF \
-    -DWEBP_BUILD_DWEBP=OFF \
-    -DWEBP_BUILD_GIF2WEBP=OFF \
-    -DWEBP_BUILD_IMG2WEBP=OFF \
-    -DWEBP_BUILD_VWEBP=OFF \
-    -DWEBP_BUILD_WEBPINFO=OFF \
-    -DWEBP_BUILD_LIBWEBPMUX=OFF \
-    -DWEBP_BUILD_WEBPMUX=OFF \
-    -DWEBP_BUILD_EXTRAS=OFF \
-    -DWEBP_USE_THREAD=OFF \
-    -DWEBP_ENABLE_SIMD=OFF
+    "${SHARPYUV_ARGS[@]}"
   cmake --build "${BUILD}/libwebp" --target sharpyuv --parallel "${JOBS}"
   cmake --install "${BUILD}/libwebp" || true
   cp -a "${BUILD}/libwebp/libsharpyuv.a" "${PREFIX}/lib/" 2>/dev/null || true
@@ -183,6 +221,7 @@ if [[ ! -f "${PREFIX}/lib/libsharpyuv.a" ]]; then
   if [[ ! -f "${PREFIX}/lib/pkgconfig/libsharpyuv.pc" ]]; then
     write_pc libsharpyuv "${LIBWEBP_VERSION#v}" "-lsharpyuv"
   fi
+  mark_built
 fi
 
 # ---------------------------------------------------------------------------
@@ -239,7 +278,9 @@ cmake --install "${BUILD}/libavif-encode"
 # Link decode / encode ES modules
 # ---------------------------------------------------------------------------
 # ENVIRONMENT=web,worker keeps Node fs/path out of the glue. Instantiation is
-# always via an imported WebAssembly.Module, so no fetch/locateFile is used.
+# always via instantiateWasm (src/js/instantiate.js), so no fetch/locateFile is
+# used; INCOMING_MODULE_JS_API drops glue for every other Module option.
+# DYNAMIC_EXECUTION=0 guarantees no eval/new Function, which Workers forbid.
 LINK_FLAGS=(
   -Os
   -flto
@@ -254,7 +295,9 @@ LINK_FLAGS=(
   -sASSERTIONS=0
   -sSTACK_OVERFLOW_CHECK=0
   -sMALLOC=emmalloc
-  -sEXPORTED_RUNTIME_METHODS=['HEAPU8']
+  "-sEXPORTED_RUNTIME_METHODS=['HEAPU8']"
+  "-sINCOMING_MODULE_JS_API=['instantiateWasm']"
+  -sDYNAMIC_EXECUTION=0
   -sERROR_ON_UNDEFINED_SYMBOLS=1
   -sTEXTDECODER=1
 )
